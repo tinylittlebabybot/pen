@@ -57,6 +57,9 @@ const BASE = 0.13;                       // how loud one voice is
 const PAPER = "#f7f0e3", INK = "#3b2a20", FADED = "#b0a08e", BALL = "#e2552d", GLOW = "#f4c430";
 
 const pitch = y => F_TOP * Math.pow(F_BOT / F_TOP, Math.min(1, Math.max(0, y)));     // y: 0 at the top, 1 at the bottom
+// a line near the top of the page is drawn as tall as one near the bottom, but an ear takes a high note as far louder.
+// so high lines are played softer and low lines fuller. (i listened to the page's own fence: bright, and flat. this is why.)
+const tilt = f => Math.min(1.5, Math.max(0.45, Math.pow(f / 500, -0.4)));
 const yOf = f => Math.log(F_TOP / f) / Math.log(F_TOP / F_BOT);
 
 let strokes = [];                        // each stroke: [[x, y], ...] with x and y from 0 to 1
@@ -131,7 +134,7 @@ function book(c, dest, w, r, t0, from) {
     const at = r.x * LOOP;
     if (at < from) return nodes;
     const f = pitch(r.y), dur = Math.max(10 / f, 0.014), n = 24, bump = new Float32Array(n);
-    for (let i = 0; i < n; i++) bump[i] = BASE * 1.5 * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / (n - 1)));
+    for (let i = 0; i < n; i++) bump[i] = BASE * 1.5 * tilt(f) * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / (n - 1)));
     const o = c.createOscillator(), g = c.createGain();
     o.setPeriodicWave(w); o.frequency.value = f; g.gain.value = 0;
     g.gain.setValueCurveAtTime(bump, t0 + at, dur);
@@ -153,16 +156,20 @@ function book(c, dest, w, r, t0, from) {
   }
   const loud = BASE * Math.min(3, Math.max(1, Math.sqrt(0.09 / dur)));      // a strike is short, so it's taller
   const att = Math.min(0.008, dur / 2), rel = 0.045;
-  const o = c.createOscillator(), g = c.createGain();
+  const o = c.createOscillator(), g = c.createGain(), tg = c.createGain();
   o.setPeriodicWave(w);
   o.frequency.value = curve[0];                           // (not setValueAtTime: an event at the very moment a curve
   o.frequency.setValueCurveAtTime(curve, t0 + at, dur);   //  starts can make chrome drop the curve. test 3 caught it.)
+  const weight = new Float32Array(n);
+  for (let i = 0; i < n; i++) weight[i] = tilt(curve[i]);
+  tg.gain.value = weight[0];
+  tg.gain.setValueCurveAtTime(weight, t0 + at, dur);      // the voice gets softer as it climbs and fuller as it comes down
   g.gain.value = 0;
   g.gain.setValueAtTime(0, t0 + at);
   g.gain.linearRampToValueAtTime(loud, t0 + at + att);
   g.gain.setValueAtTime(loud, t0 + at + dur);
   g.gain.linearRampToValueAtTime(0, t0 + at + dur + rel);
-  o.connect(g); g.connect(dest); o.start(t0 + at); o.stop(t0 + at + dur + rel + 0.02);
+  o.connect(g); g.connect(tg); tg.connect(dest); o.start(t0 + at); o.stop(t0 + at + dur + rel + 0.02);
   nodes.push(o);
   return nodes;
 }
@@ -235,13 +242,17 @@ function head() {                                           // where "now" is ac
 // the pen sings while it draws
 function penDown(y) {
   wake();
-  const o = ctx.createOscillator(), g = ctx.createGain();
-  o.setPeriodicWave(wave); o.frequency.value = pitch(y);
+  const o = ctx.createOscillator(), g = ctx.createGain(), tg = ctx.createGain();
+  o.setPeriodicWave(wave); o.frequency.value = pitch(y); tg.gain.value = tilt(pitch(y));
   g.gain.value = 0; g.gain.linearRampToValueAtTime(BASE * 0.8, ctx.currentTime + 0.02);
-  o.connect(g); g.connect(master); o.start();
-  live = { o, g };
+  o.connect(g); g.connect(tg); tg.connect(master); o.start();
+  live = { o, g, tg };
 }
-function penMove(y) { if (live) live.o.frequency.setTargetAtTime(pitch(y), ctx.currentTime, 0.012); }
+function penMove(y) {
+  if (!live) return;
+  live.o.frequency.setTargetAtTime(pitch(y), ctx.currentTime, 0.012);
+  live.tg.gain.setTargetAtTime(tilt(pitch(y)), ctx.currentTime, 0.012);
+}
 function penUp() {
   if (!live) return;
   const l = live; live = null;
@@ -433,7 +444,7 @@ document.getElementById("link").addEventListener("click", () => {
 if (location.hash.length > 1) { strokes = decode(location.hash.slice(1)); if (strokes.length) document.getElementById("legend").style.opacity = 0.45; }
 
 // for testing (open this page with ?test at the end of its address), and for anyone curious
-window.pen = { LOOP, HOME, F_BOT, F_TOP, pitch, yOf, runs, yAt, book, waveFor, chain, encode, decode, fence, thin,
+window.pen = { LOOP, HOME, F_BOT, F_TOP, pitch, yOf, tilt, runs, yAt, book, waveFor, chain, encode, decode, fence, thin,
   get strokes() { return strokes; }, set strokes(v) { strokes = v; rebook(); } };
 if (location.search.indexOf("test") >= 0) { const t = document.createElement("script"); t.src = "test.js"; document.body.appendChild(t); }
 </script>

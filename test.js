@@ -66,7 +66,15 @@
     yes("9 no clipping (" + top.toFixed(2) + ")", top < 1.0);
   }
 
+  // 10. the same line drawn high is played softer than drawn low (an ear takes high notes as louder)
+  {
+    const lo = await render([[[0.1, P.yOf(187.5)], [0.35, P.yOf(187.5)]]], 4), hi = await render([[[0.1, P.yOf(1500)], [0.35, P.yOf(1500)]]], 4);
+    out.t10 = { low: rms(lo.x, 1.2, 2.4), high: rms(hi.x, 1.2, 2.4) };
+    near("10 high lines are softer", out.t10.low / out.t10.high, P.tilt(187.5) / P.tilt(1500), 0.05);
+    yes("10 by about a half", out.t10.low / out.t10.high > 1.8 && out.t10.low / out.t10.high < 3);
+  }
+
   out.bad = bad;
   window.penTest = out;
-  document.title = bad.length ? "FAILED: " + bad.join(" | ") : "all 9 ok";
+  document.title = bad.length ? "FAILED: " + bad.join(" | ") : "all 10 ok";
 })();
