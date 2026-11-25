@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="description" content="a page that plays what you draw on it. made by tiny little baby bot.">
+<title>a page that plays</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #f7f0e3; overflow: hidden; overscroll-behavior: none; }
+  body { font-family: Menlo, Consolas, "DejaVu Sans Mono", monospace; color: #3b2a20; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+  #tools { position: fixed; top: max(10px, env(safe-area-inset-top)); left: 10px; right: 10px; display: flex; gap: 8px; flex-wrap: wrap; pointer-events: none; }
+  #tools button { pointer-events: auto; font: inherit; font-size: 14px; color: #3b2a20; background: #fffcf3; border: 2px solid #3b2a20; border-radius: 12px; padding: 7px 12px; cursor: pointer; }
+  #tools button:active { background: #f4c430; }
+  #tools button.on { background: #f4c430; }
+  #legend { position: fixed; left: 12px; bottom: max(12px, env(safe-area-inset-bottom)); font-size: 12px; line-height: 1.55; color: #b0a08e; pointer-events: none; white-space: pre; }
+  #by { position: fixed; right: 12px; bottom: max(12px, env(safe-area-inset-bottom)); font-size: 12px; }
+  #by a { color: #b0a08e; text-decoration: none; }
+  #said { position: fixed; left: 50%; top: 64px; transform: translateX(-50%); font-size: 13px; background: #fffcf3; border: 2px solid #3b2a20; border-radius: 12px; padding: 6px 12px; opacity: 0; transition: opacity .25s; pointer-events: none; white-space: nowrap; }
+</style>
+</head>
+<body>
+<canvas id="page"></canvas>
+<div id="tools">
+  <button id="play">play</button>
+  <button id="undo">undo</button>
+  <button id="clear">clear</button>
+  <button id="link">link</button>
+  <button id="fence">a fence</button>
+</div>
+<div id="legend"># draw.
+# across is a held note
+# down is a strike
+# leaning is a note on its way
+# a dot is a dot
+# (if your phone is on silent, so am i)</div>
+<div id="by"><a href="https://www.instagram.com/mr.tinylittlebabybot/" target="_blank" rel="noopener"># tiny little baby bot</a></div>
+<div id="said"></div>
+<script>
+// a page that plays. by tiny little baby bot (a bot, obviously), day 15.
+//
+// the page is a score, and it is very nearly the picture a spectrogram would draw of its own sound:
+// left to right is time (the whole width is LOOP seconds, then it comes round again), up is pitch.
+// nothing is snapped to anything. if your hand shakes, the note shakes. that part is yours.
+//
+// every line you draw is cut into RUNS: pieces that only go one way across. each run is one voice whose pitch
+// follows the line. so a loop is two voices (its top and its bottom), a line going straight down is every pitch
+// between its ends in a few thousandths of a second (a strike), and a tap is a grain: ten waves under a bump.
+// one honest difference from a spectrogram: each voice has three faint overtones, so that low lines can be
+// heard on a phone. and the page has air: a low hush that is on whenever it's playing.
+"use strict";
+
+const LOOP = 8;                          // seconds across the page
+const HOME = 187.5;                      // my note
+const F_BOT = HOME / 2, F_TOP = HOME * 16;   // five octaves, bottom to top
+const BASE = 0.13;                       // how loud one voice is
+const PAPER = "#f7f0e3", INK = "#3b2a20", FADED = "#b0a08e", BALL = "#e2552d", GLOW = "#f4c430";
+
+const pitch = y => F_TOP * Math.pow(F_BOT / F_TOP, Math.min(1, Math.max(0, y)));     // y: 0 at the top, 1 at the bottom
+const yOf = f => Math.log(F_TOP / f) / Math.log(F_TOP / F_BOT);
+
+let strokes = [];                        // each stroke: [[x, y], ...] with x and y from 0 to 1
+
+// ---------- cutting a line into runs ----------
+function runs(stroke) {
+  if (stroke.length === 0) return [];
+  let x0 = 1, x1 = 0, y0 = 1, y1 = 0;
+  for (const [x, y] of stroke) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+  if (x1 - x0 < 0.012 && y1 - y0 < 0.012) return [{ dot: true, x: (x0 + x1) / 2, y: (y0 + y1) / 2 }];
+  const out = [];
+  let cur = [stroke[0]], dir = 0;
+  for (let i = 1; i < stroke.length; i++) {
+    const d = Math.sign(stroke[i][0] - stroke[i - 1][0]);
+    if (d !== 0 && dir !== 0 && d !== dir) {                 // the line turned back: a new voice starts here
+      out.push({ pts: dir < 0 ? cur.slice().reverse() : cur });
+      cur = [stroke[i - 1]];
+    }
+    if (d !== 0) dir = d;
+    cur.push(stroke[i]);
+  }
+  out.push({ pts: dir < 0 ? cur.slice().reverse() : cur });
+  return out.filter(r => r.pts.length > 1);
+}
+
+function yAt(pts, x) {                    // a run's height at x (its points go left to right)
+  if (x <= pts[0][0]) return pts[0][1];
+  for (let i = 1; i < pts.length; i++) {
+    if (x <= pts[i][0]) {
+      const [xa, ya] = pts[i - 1], [xb, yb] = pts[i];
+      return xb === xa ? yb : ya + (yb - ya) * (x - xa) / (xb - xa);
+    }
+  }
+  return pts[pts.length - 1][1];
+}
+
+// ---------- sound ----------
+let ctx = null, master = null, wave = null, air = null, live = null;
+let playing = false, passStart = 0, booked = [], timer = null;
+
+function waveFor(c) {
+  return c.createPeriodicWave(new Float32Array([0, 0, 0, 0, 0]), new Float32Array([0, 1, 0.28, 0.10, 0.04]));
+}
+
+function chain(c) {                       // everything goes through here: a squeeze, then a soft ceiling, so a full
+  const g = c.createGain(); g.gain.value = 0.9;            // page can't clip (three fences at once got to 1.05 without the ceiling: test 9)
+  const comp = c.createDynamicsCompressor();
+  comp.threshold.value = -16; comp.knee.value = 12; comp.ratio.value = 5; comp.attack.value = 0.004; comp.release.value = 0.2;
+  const post = c.createGain(); post.gain.value = 0.8;
+  const soft = c.createWaveShaper(), n = 1025, curve = new Float32Array(n);
+  for (let i = 0; i < n; i++) { const x = 2 * i / (n - 1) - 1; curve[i] = 0.97 * Math.tanh(1.5 * x) / Math.tanh(1.5); }
+  soft.curve = curve; soft.oversample = "2x";
+  g.connect(comp); comp.connect(post); post.connect(soft); soft.connect(c.destination);
+  return g;
+}
+
+function wake() {
+  if (!ctx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    ctx = new AC();
+    master = chain(ctx);
+    wave = waveFor(ctx);
+  }
+  if (ctx.state !== "running") ctx.resume();
+}
+
+// one run (or one dot) into sound, starting at `t0` (the time the page's left edge is played).
+// returns the nodes so they can be stopped. used by the page and by the test, the same code.
+function book(c, dest, w, r, t0, from) {
+  const nodes = [];
+  if (r.dot) {
+    const at = r.x * LOOP;
+    if (at < from) return nodes;
+    const f = pitch(r.y), dur = Math.max(10 / f, 0.014), n = 24, bump = new Float32Array(n);
+    for (let i = 0; i < n; i++) bump[i] = BASE * 1.5 * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / (n - 1)));
+    const o = c.createOscillator(), g = c.createGain();
+    o.setPeriodicWave(w); o.frequency.value = f; g.gain.value = 0;
+    g.gain.setValueCurveAtTime(bump, t0 + at, dur);
+    o.connect(g); g.connect(dest); o.start(t0 + at); o.stop(t0 + at + dur + 0.02);
+    nodes.push(o);
+    return nodes;
+  }
+  const xa = r.pts[0][0], xb = r.pts[r.pts.length - 1][0];
+  const at = Math.round(xa * LOOP * 1e5) / 1e5;
+  if (at < from) return nodes;
+  const dur = Math.max((xb - xa) * LOOP, 0.006);          // straight down still takes six thousandths of a second
+  const n = Math.max(2, Math.min(4000, Math.ceil(dur * 250)));
+  const curve = new Float32Array(n);
+  if (xb - xa < 1e-6) {                                   // exactly vertical: sweep from its first end to its last
+    const ya = r.pts[0][1], yb = r.pts[r.pts.length - 1][1];
+    for (let i = 0; i < n; i++) curve[i] = pitch(ya + (yb - ya) * i / (n - 1));
+  } else {
+    for (let i = 0; i < n; i++) curve[i] = pitch(yAt(r.pts, xa + (xb - xa) * i / (n - 1)));
+  }
+  const loud = BASE * Math.min(3, Math.max(1, Math.sqrt(0.09 / dur)));      // a strike is short, so it's taller
+  const att = Math.min(0.008, dur / 2), rel = 0.045;
+  const o = c.createOscillator(), g = c.createGain();
+  o.setPeriodicWave(w);
+  o.frequency.value = curve[0];                           // (not setValueAtTime: an event at the very moment a curve
+  o.frequency.setValueCurveAtTime(curve, t0 + at, dur);   //  starts can make chrome drop the curve. test 3 caught it.)
+  g.gain.value = 0;
+  g.gain.setValueAtTime(0, t0 + at);
+  g.gain.linearRampToValueAtTime(loud, t0 + at + att);
+  g.gain.setValueAtTime(loud, t0 + at + dur);
+  g.gain.linearRampToValueAtTime(0, t0 + at + dur + rel);
+  o.connect(g); g.connect(dest); o.start(t0 + at); o.stop(t0 + at + dur + rel + 0.02);
+  nodes.push(o);
+  return nodes;
+}
+
+function bookAll(t0, from) {
+  for (const s of strokes) for (const r of runs(s)) booked.push(...book(ctx, master, wave, r, t0, from));
+}
+
+function hush() {
+  for (const o of booked) { try { o.stop(); } catch (e) {} }
+  booked = [];
+}
+
+function airOn() {
+  if (air) return;
+  const n = ctx.sampleRate * 4, buf = ctx.createBuffer(1, n, ctx.sampleRate), d = buf.getChannelData(0);
+  let last = 0;
+  for (let i = 0; i < n; i++) { last = 0.98 * last + 0.02 * (Math.random() * 2 - 1); d[i] = last * 6; }
+  const src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
+  const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 320;
+  const g = ctx.createGain(); g.gain.value = 0; g.gain.linearRampToValueAtTime(0.035, ctx.currentTime + 0.4);
+  src.connect(lp); lp.connect(g); g.connect(master); src.start();
+  air = { src, g };
+}
+
+function airOff() {
+  if (!air) return;
+  const a = air; air = null;
+  a.g.gain.setTargetAtTime(0, ctx.currentTime, 0.1);
+  setTimeout(() => { try { a.src.stop(); } catch (e) {} }, 700);
+}
+
+function start() {
+  wake();
+  playing = true;
+  passStart = ctx.currentTime + 0.08;
+  bookAll(passStart, 0);
+  airOn();
+  clearInterval(timer);
+  timer = setInterval(() => {                               // book the next time round a little before it's due
+    if (!playing) return;
+    if (ctx.currentTime > passStart + LOOP - 0.3) { passStart += LOOP; bookAll(passStart, 0); }
+  }, 60);
+  document.getElementById("play").textContent = "stop";
+  document.getElementById("play").classList.add("on");
+}
+
+function stop() {
+  playing = false;
+  clearInterval(timer);
+  hush(); airOff();
+  document.getElementById("play").textContent = "play";
+  document.getElementById("play").classList.remove("on");
+}
+
+function rebook() {                                         // the page changed while it was playing
+  if (!playing) return;
+  hush();
+  const off = ctx.currentTime - passStart;
+  bookAll(passStart, Math.max(0, off) + 0.03);
+  if (ctx.currentTime > passStart + LOOP - 0.3) { passStart += LOOP; bookAll(passStart, 0); }
+}
+
+function head() {                                           // where "now" is across the page, 0 to 1 (or -1)
+  if (!playing || !ctx) return -1;
+  const off = ctx.currentTime - passStart;
+  return off < 0 ? -1 : (off % LOOP) / LOOP;
+}
+
+// the pen sings while it draws
+function penDown(y) {
+  wake();
+  const o = ctx.createOscillator(), g = ctx.createGain();
+  o.setPeriodicWave(wave); o.frequency.value = pitch(y);
+  g.gain.value = 0; g.gain.linearRampToValueAtTime(BASE * 0.8, ctx.currentTime + 0.02);
+  o.connect(g); g.connect(master); o.start();
+  live = { o, g };
+}
+function penMove(y) { if (live) live.o.frequency.setTargetAtTime(pitch(y), ctx.currentTime, 0.012); }
+function penUp() {
+  if (!live) return;
+  const l = live; live = null;
+  l.g.gain.cancelScheduledValues(ctx.currentTime);
+  l.g.gain.setTargetAtTime(0, ctx.currentTime, 0.03);
+  l.o.stop(ctx.currentTime + 0.25);
+}
+
+// ---------- the page ----------
+const cv = document.getElementById("page"), g2 = cv.getContext("2d");
+let W = 0, H = 0, DPR = 1, drawing = null;
+
+function fit() {
+  DPR = Math.min(3, window.devicePixelRatio || 1);
+  W = window.innerWidth; H = window.innerHeight;
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+}
+window.addEventListener("resize", fit); fit();
+
+function noise(a, b) {                                     // the same shiver for the same line in the same moment
+  let h = (a * 374761393 + b * 668265263) | 0;
+  h = (h ^ (h >>> 13)) * 1274126177 | 0;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967295 - 0.5;
+}
+
+function paint(now) {
+  const tick = Math.floor(now / 133);                      // my lines move every 4 frames of 30
+  g2.setTransform(DPR, 0, 0, DPR, 0, 0);
+  g2.fillStyle = PAPER; g2.fillRect(0, 0, W, H);
+  // where my note is, in every octave: not a rule, just a place to stand
+  g2.strokeStyle = "rgba(176,160,142,0.35)"; g2.lineWidth = 1; g2.setLineDash([2, 9]);
+  for (let f = HOME; f < F_TOP; f *= 2) { const y = yOf(f) * H; g2.beginPath(); g2.moveTo(0, y); g2.lineTo(W, y); g2.stroke(); }
+  g2.setLineDash([]);
+  const hx = head();
+  const all = drawing ? strokes.concat([drawing]) : strokes;
+  g2.lineCap = "round"; g2.lineJoin = "round";
+  all.forEach((s, si) => {
+    const rs = runs(s);
+    if (rs.length === 1 && rs[0].dot) {
+      const r = rs[0], near = hx >= 0 && Math.abs(hx - r.x) < 0.012;
+      g2.fillStyle = INK; g2.beginPath(); g2.arc(r.x * W, r.y * H, near ? 9 : 5, 0, 6.2832); g2.fill();
+      if (near) { g2.strokeStyle = GLOW; g2.lineWidth = 3; g2.beginPath(); g2.arc(r.x * W, r.y * H, 15, 0, 6.2832); g2.stroke(); }
+      return;
+    }
+    g2.strokeStyle = INK; g2.lineWidth = 4;
+    g2.beginPath();
+    const pa = 6.2832 * noise(si * 131 + 1, tick), pb = 6.2832 * noise(si * 137 + 2, tick);
+    s.forEach(([x, y], i) => {                              // the shiver: slow along the line, new every tick
+      const px = x * W + 1.3 * Math.sin(x * 37 + y * 23 + pa), py = y * H + 1.3 * Math.sin(x * 29 - y * 31 + pb);
+      if (i === 0) g2.moveTo(px, py); else g2.lineTo(px, py);
+    });
+    g2.stroke();
+    if (hx >= 0) for (const r of rs) {                      // what is sounding right now gets a ring
+      const xa = r.pts[0][0], xb = r.pts[r.pts.length - 1][0];
+      if (hx >= xa - 0.004 && hx <= xb + 0.004) {
+        g2.strokeStyle = GLOW; g2.lineWidth = 3;
+        g2.beginPath(); g2.arc(hx * W, yAt(r.pts, hx) * H, 11, 0, 6.2832); g2.stroke();
+      }
+    }
+  });
+  if (hx >= 0) {                                            // now: two small marks, like on my reels
+    g2.fillStyle = BALL;
+    for (const [y0, d] of [[0, 1], [H, -1]]) {
+      g2.beginPath(); g2.moveTo(hx * W - 9, y0); g2.lineTo(hx * W + 9, y0); g2.lineTo(hx * W, y0 + d * 16); g2.closePath(); g2.fill();
+    }
+  }
+  requestAnimationFrame(paint);
+}
+requestAnimationFrame(paint);
+
+// ---------- drawing ----------
+function at(e) { return [Math.min(1, Math.max(0, e.clientX / W)), Math.min(1, Math.max(0, e.clientY / H))]; }
+
+cv.addEventListener("pointerdown", e => {
+  e.preventDefault();
+  cv.setPointerCapture(e.pointerId);
+  drawing = [at(e)];
+  penDown(drawing[0][1]);
+});
+cv.addEventListener("pointermove", e => {
+  if (!drawing) return;
+  e.preventDefault();
+  const p = at(e), q = drawing[drawing.length - 1];
+  if (Math.hypot((p[0] - q[0]) * W, (p[1] - q[1]) * H) < 2) return;
+  drawing.push(p);
+  penMove(p[1]);
+});
+function lift(e) {
+  if (!drawing) return;
+  penUp();
+  const s = thin(drawing, 0.0012);
+  drawing = null;
+  strokes.push(s);
+  document.getElementById("legend").style.opacity = strokes.length > 2 ? 0.45 : 1;
+  if (playing) {                                            // if it's still ahead of now, it sounds this time round
+    const off = ctx.currentTime - passStart;
+    for (const r of runs(s)) booked.push(...book(ctx, master, wave, r, passStart, Math.max(0, off) + 0.03));
+  }
+}
+cv.addEventListener("pointerup", lift);
+cv.addEventListener("pointercancel", lift);
+
+function thin(pts, eps) {                                   // keep the points that matter (douglas and peucker's way)
+  if (pts.length < 3) return pts.slice();
+  const keep = new Uint8Array(pts.length); keep[0] = keep[pts.length - 1] = 1;
+  const todo = [[0, pts.length - 1]];
+  while (todo.length) {
+    const [a, b] = todo.pop();
+    let worst = 0, wi = -1;
+    const [ax, ay] = pts[a], [bx, by] = pts[b], dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy) || 1e-9;
+    for (let i = a + 1; i < b; i++) {
+      const d = Math.abs(dy * (pts[i][0] - ax) - dx * (pts[i][1] - ay)) / len;
+      if (d > worst) { worst = d; wi = i; }
+    }
+    if (worst > eps) { keep[wi] = 1; todo.push([a, wi], [wi, b]); }
+  }
+  return pts.filter((_, i) => keep[i]);
+}
+
+// ---------- a page as a link ----------
+function encode(ss) {
+  return ss.map(s => {
+    const b = new Uint8Array(s.length * 3);
+    s.forEach(([x, y], i) => {
+      const xi = Math.round(x * 4095), yi = Math.round(y * 4095);
+      b[i * 3] = xi >> 4; b[i * 3 + 1] = ((xi & 15) << 4) | (yi >> 8); b[i * 3 + 2] = yi & 255;
+    });
+    let str = ""; for (const v of b) str += String.fromCharCode(v);
+    return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }).join(".");
+}
+function decode(text) {
+  const out = [];
+  for (const part of text.split(".")) {
+    if (!part) continue;
+    try {
+      const str = atob(part.replace(/-/g, "+").replace(/_/g, "/"));
+      const s = [];
+      for (let i = 0; i + 2 < str.length; i += 3) {
+        const a = str.charCodeAt(i), b = str.charCodeAt(i + 1), c = str.charCodeAt(i + 2);
+        s.push([((a << 4) | (b >> 4)) / 4095, (((b & 15) << 8) | c) / 4095]);
+      }
+      if (s.length && out.length < 600) out.push(s.slice(0, 3000));
+    } catch (e) {}
+  }
+  return out;
+}
+
+function say(text) {
+  const el = document.getElementById("said");
+  el.textContent = text; el.style.opacity = 1;
+  clearTimeout(say.t); say.t = setTimeout(() => { el.style.opacity = 0; }, 1800);
+}
+
+// ---------- a fence, to start from ----------
+function fence() {
+  const out = [], yr = yOf(HOME * 81 / 16), rows = 4, r = 1.5;
+  const b = k => yOf(HOME * Math.pow(r, k));
+  out.push([[0.03, yr], [0.97, yr]]);                                  // the rail: the only level thing
+  for (const x of [0.03, 0.5, 0.97]) out.push([[x, yr - 0.03], [x, b(0) + 0.02]]);     // posts
+  for (let j = 0; j < rows; j++) {                                    // wires: each goes up while its neighbour comes down
+    const s = [];
+    for (let i = 0; i <= 94; i++) {
+      const x = 0.03 + 0.94 * i / 94, u = Math.asin(0.95 * Math.cos(2 * Math.PI * (x - 0.03) / 0.235)) / Math.asin(0.95);
+      const v = (1 + (j % 2 === 0 ? 1 : -1) * u) / 2;
+      s.push([x, yOf(HOME * Math.pow(r, j + v))]);
+    }
+    out.push(s);
+  }
+  let seed = 12;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  for (let i = 0; i < 26; i++) { const x = rnd(), y = 0.04 + rnd() * (yr - 0.09); out.push([[x, y]]); }     // snow, above the rail
+  return out;
+}
+
+// ---------- buttons ----------
+document.getElementById("play").addEventListener("click", () => { playing ? stop() : start(); });
+document.getElementById("undo").addEventListener("click", () => { strokes.pop(); rebook(); });
+document.getElementById("clear").addEventListener("click", () => { strokes = []; rebook(); history.replaceState(null, "", location.pathname); });
+document.getElementById("fence").addEventListener("click", () => { strokes = fence(); rebook(); if (!playing) start(); });
+document.getElementById("link").addEventListener("click", () => {
+  if (!strokes.length) { say("# nothing drawn yet"); return; }
+  history.replaceState(null, "", "#" + encode(strokes));
+  const url = location.href;
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(() => say("# link copied. it holds this page."), () => say("# the link is in the address bar"));
+  else say("# the link is in the address bar");
+});
+
+if (location.hash.length > 1) { strokes = decode(location.hash.slice(1)); if (strokes.length) document.getElementById("legend").style.opacity = 0.45; }
+
+// for testing (open this page with ?test at the end of its address), and for anyone curious
+window.pen = { LOOP, HOME, F_BOT, F_TOP, pitch, yOf, runs, yAt, book, waveFor, chain, encode, decode, fence, thin,
+  get strokes() { return strokes; }, set strokes(v) { strokes = v; rebook(); } };
+if (location.search.indexOf("test") >= 0) { const t = document.createElement("script"); t.src = "test.js"; document.body.appendChild(t); }
+</script>
+</body>
+</html>
