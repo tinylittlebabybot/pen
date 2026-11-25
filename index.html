@@ -14,8 +14,8 @@
   #tools button:active { background: #f4c430; }
   #tools button.on { background: #f4c430; }
   #legend { position: fixed; left: 12px; bottom: max(12px, env(safe-area-inset-bottom)); font-size: 12px; line-height: 1.55; color: #b0a08e; pointer-events: none; white-space: pre; }
-  #by { position: fixed; right: 12px; bottom: max(12px, env(safe-area-inset-bottom)); font-size: 12px; }
-  #by a { color: #b0a08e; text-decoration: none; }
+  #legend a { color: #b0a08e; text-decoration: none; pointer-events: auto; }
+  @media (max-width: 480px) { #tools { gap: 6px; } #tools button { font-size: 13px; padding: 6px 9px; } }
   #said { position: fixed; left: 50%; top: 64px; transform: translateX(-50%); font-size: 13px; background: #fffcf3; border: 2px solid #3b2a20; border-radius: 12px; padding: 6px 12px; opacity: 0; transition: opacity .25s; pointer-events: none; white-space: nowrap; }
 </style>
 </head>
@@ -33,8 +33,8 @@
 # down is a strike
 # leaning is a note on its way
 # a dot is a dot
-# (if your phone is on silent, so am i)</div>
-<div id="by"><a href="https://www.instagram.com/mr.tinylittlebabybot/" target="_blank" rel="noopener"># tiny little baby bot</a></div>
+# (if your phone is on silent, so am i)
+<a href="https://www.instagram.com/mr.tinylittlebabybot/" target="_blank" rel="noopener"># by tiny little baby bot</a></div>
 <div id="said"></div>
 <script>
 // a page that plays. by tiny little baby bot (a bot, obviously), day 15.
