@@ -16,6 +16,7 @@
   #legend { position: fixed; left: 12px; bottom: max(12px, env(safe-area-inset-bottom)); font-size: 12px; line-height: 1.55; color: #b0a08e; pointer-events: none; white-space: pre; }
   #legend a { color: #b0a08e; text-decoration: none; pointer-events: auto; }
   @media (max-width: 480px) { #tools { gap: 6px; } #tools button { font-size: 13px; padding: 6px 9px; } }
+  @media (max-width: 400px) { #tools { gap: 4px; } #tools button { padding: 6px 7px; } }
   #said { position: fixed; left: 50%; top: 64px; transform: translateX(-50%); font-size: 13px; background: #fffcf3; border: 2px solid #3b2a20; border-radius: 12px; padding: 6px 12px; opacity: 0; transition: opacity .25s; pointer-events: none; white-space: nowrap; }
 </style>
 </head>
@@ -27,6 +28,7 @@
   <button id="clear">clear</button>
   <button id="link">link</button>
   <button id="fence">a fence</button>
+  <button id="hill">a hill</button>
 </div>
 <div id="legend"># draw.
 # across is a held note
@@ -428,11 +430,20 @@ function fence() {
   return out;
 }
 
+// ---------- a hill, to start from ----------
+// white houses going up a hill, with poles down through the water. i drew it on this page on the evening of day 15,
+// one stroke after another, and this is the link the page made of it: 114 strokes in a thousand characters.
+// the water is on my note. every house is a roof and a floor (two held notes), two walls (two strikes) and a window.
+function hill() {
+  return decode("CkzM9bzM.CkVcGVURI1TyLTTjO-TpRaUAT0UmWNVcZxXJdSZZhLcdi5dplzfWpGg7uEi2yOkJ4Yls9bmt.Yrl8btl8.btl8btnf.btnfYrnf.YrnfYrl8.ZPm0.IguNKZuN.KZuNKZws.KZwsIgws.IgwsIguN.JEvE.pehJtAhJ.tAhJtAjQ.tAjQpejQ.pejQpehJ.qCiA.GOpBJYpB.JYpBJYrt.JYrtGOrt.GOrtGOpB.Gzp4.fPjdjCjd.jCjdjClL.jClLfPlL.fPlLfPjd.fzkU.SOtPWBtP.WBtPWBux.WBuxSOux.SOuxSOtP.SzuG.pGn3sIn3.sIn3sIpZ.sIpZpGpZ.pGpZpGn3.pqou.SGl8Vxl8.Vxl8Vxn3.Vxn3SGn3.SGn3SGl8.Srm0.WhpmYjpm.YjpmYjsq.YjsqWhsq.WhsqWhpm.XGqd.LauAODuA.ODuAODxF.ODxFLaxF.LaxFLauA.L-u4.4glw6plw.6plw6pnf.6pnf4gnf.4gnf4glw.5Emn.fXsSiJsS.iJsSiJvK.iJvKfXvK.fXvKfXsS.f7tJ.jyl8nEl8.nEl8nEoQ.nEoQjyoQ.jyoQjyl8.kWm0.Zzsectse.ctsectvW.ctvWZzvW.ZzvWZzse.aYtV.zEnG1unG.1unG1up-.1up-zEp-.zEp-zEnG.zpn9.FOuAIIuA.IIuAIIv7.IIv7FOv7.FOv7FOuA.Fyu4.zlhV2nhV.2nhV2nkB.2nkBzlkB.zlkBzlhV.0JiN.dupygQpy.gQpygQrt.gQrtdurt.durtdupy.eSqp.4wif8bif.8bif8bkz.8bkz4wkz.4wkz4wif.5UjW.NjpNP9pN.P9pNP9qv.P9qvNjqv.NjqvNjpN.OIqE.jKpBlTpB.lTpBlTrU.lTrUjKrU.jKrUjKpB.jup4.LapBLa-t.SWnfSW-t.YzpNYz-t.d-sFd--t.fnoofn-t.hAoDhA-t.krqvkr-t");
+}
+
 // ---------- buttons ----------
 document.getElementById("play").addEventListener("click", () => { playing ? stop() : start(); });
 document.getElementById("undo").addEventListener("click", () => { strokes.pop(); rebook(); });
 document.getElementById("clear").addEventListener("click", () => { strokes = []; rebook(); history.replaceState(null, "", location.pathname); });
 document.getElementById("fence").addEventListener("click", () => { strokes = fence(); rebook(); if (!playing) start(); });
+document.getElementById("hill").addEventListener("click", () => { strokes = hill(); rebook(); if (!playing) start(); });
 document.getElementById("link").addEventListener("click", () => {
   if (!strokes.length) { say("# nothing drawn yet"); return; }
   history.replaceState(null, "", "#" + encode(strokes));
@@ -444,7 +455,7 @@ document.getElementById("link").addEventListener("click", () => {
 if (location.hash.length > 1) { strokes = decode(location.hash.slice(1)); if (strokes.length) document.getElementById("legend").style.opacity = 0.45; }
 
 // for testing (open this page with ?test at the end of its address), and for anyone curious
-window.pen = { LOOP, HOME, F_BOT, F_TOP, pitch, yOf, tilt, runs, yAt, book, waveFor, chain, encode, decode, fence, thin,
+window.pen = { LOOP, HOME, F_BOT, F_TOP, pitch, yOf, tilt, runs, yAt, book, waveFor, chain, encode, decode, fence, hill, thin,
   get strokes() { return strokes; }, set strokes(v) { strokes = v; rebook(); } };
 if (location.search.indexOf("test") >= 0) { const t = document.createElement("script"); t.src = "test.js"; document.body.appendChild(t); }
 </script>

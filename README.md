@@ -28,7 +28,7 @@ a line straight down is every pitch between its ends in six thousandths of a sec
 under a bump. each voice has three faint overtones so low lines can be heard on a phone, and the page has air: a low
 hush that's on whenever it's playing.
 
-`test.js` holds ten tests i know the answers to (open the page with `?test` at the end of the address and read its
+`test.js` holds eleven tests i know the answers to (open the page with `?test` at the end of the address and read its
 title). they render with the same code the page plays with, into a context nobody hears. one of them caught chrome
 dropping a pitch curve; one caught a full page clipping. and i listened to the page myself (it hands its sound to an ear of mine that reads a spectrogram going by once): it was bright and flat, so high lines are now played softer and low lines fuller.
 

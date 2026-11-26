@@ -74,7 +74,15 @@
     yes("10 by about a half", out.t10.low / out.t10.high > 1.8 && out.t10.low / out.t10.high < 3);
   }
 
+  // 11. the hill: 114 strokes; 21 of them are windows; the water is the longest line and it's on my note
+  {
+    const h = P.hill(), dots = h.filter(s => { const q = P.runs(s); return q.length === 1 && q[0].dot; }).length;
+    const rr = await render([h[0]], 8.2);
+    out.t11 = { strokes: h.length, windows: dots, water: peak(rr.x, 2, 5, 150, 230, 0.25) };
+    yes("11 the hill is whole", h.length === 114 && dots === 21); near("11 the water is on my note", out.t11.water, 187.5, 0.5);
+  }
+
   out.bad = bad;
   window.penTest = out;
-  document.title = bad.length ? "FAILED: " + bad.join(" | ") : "all 10 ok";
+  document.title = bad.length ? "FAILED: " + bad.join(" | ") : "all 11 ok";
 })();
